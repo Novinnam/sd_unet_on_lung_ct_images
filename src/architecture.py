@@ -39,7 +39,7 @@ class SaBlock(tf.keras.layers.Layer):
         out = self.add([y, mul])
         return out
 
-class DownConv(tf.keras.layers.Layer):
+class DownConvBlock(tf.keras.layers.Layer):
     def __init__(self, filters):
         self.max_pool = tf.keras.layers.MaxPooling2D()
         self.avg_pool = tf.keras.layers.AveragePooling2D()
@@ -57,7 +57,7 @@ class DownConv(tf.keras.layers.Layer):
         out = self.leaky_relu(z)
         return out
 
-class UpConv(tf.keras.layers.Layer):
+class UpConvBlock(tf.keras.layers.Layer):
     def __init__(self, filters):
         self.up_sampling = tf.keras.layers.UpSampling2D(interpolation='bilinear')
         self.conv = tf.keras.layers.Conv2D(filters, kernel_size=1)
