@@ -37,6 +37,7 @@ class SaBlock(tf.keras.layers.Layer):
 
 class DownConvBlock(tf.keras.layers.Layer):
     def __init__(self, filters):
+        super(DownConvBlock, self).__init__()
         self.conv_block = ConvBlock(filters, kernel_size=1)
     
     def call(self, input):
@@ -48,6 +49,7 @@ class DownConvBlock(tf.keras.layers.Layer):
 
 class UpConvBlock(tf.keras.layers.Layer):
     def __init__(self, filters):
+        super(UpConvBlock, self).__init__()
         self.up_sampling = tf.keras.layers.UpSampling2D(interpolation='bilinear')
         self.conv_block = ConvBlock(filters, kernel_size=1)
     
@@ -58,6 +60,7 @@ class UpConvBlock(tf.keras.layers.Layer):
 
 class DenseAsppBlock(tf.keras.layers.Layer):
     def __init__(self, filters):
+        super(DenseAsppBlock, self).__init__()
         self.second_branch_conv_block = ConvBlock(filters, dilation_rate=18)
         self.third_branch_conv_block = ConvBlock(filters, dilation_rate=12)
         self.fourth_branch_conv_block = ConvBlock(filters, dilation_rate=6)
@@ -78,59 +81,56 @@ class DenseAsppBlock(tf.keras.layers.Layer):
         out = tf.concat([first_branch, second_branch, third_branch, fourth_branch, fifth_branch], axis=-1)
         return out
         
-def SD_UNet(input_size=(288, 288, 3)):
-  input = tf.keras.Input(input_size)
-  x1 = SaBlock(32, input)
-  x2 = DownConvBlock(32, x1)
-  print("Stage1", x2.shape)
-
-  x3 = SaBlock(64, x2)
-  x4 = DownConvBlock(64, x3)
-  print("Stage2", x4.shape)
-
-  x5 = SaBlock(128, x4)
-  x6 = DownConvBlock(128, x5)
-  print("Stage3", x6.shape)
-
-  x7 = SaBlock(256, x6)
-  x8 = DownConvBlock(256, x7)
-  print("Stage4", x8.shape)
-
-  x9 = SaBlock(512, x8)
-  print("Stage5", x9.shape)
-  
-  x10 = DASPP(x9)
-  print("Stage6", x10.shape)
-
-  # Check stage7 and stage8 dimensions
-  x11 = UpConvBlock(256, x10)
-  print("Stage7", x11.shape)
-  x12 = tf.keras.layers.Concatenate(axis=-1)([x11, x7])
-  print("Stage7_1", x12.shape)
-  x13 = SaBlock(256, x12)
-  print("Stage8", x13.shape)
-
-  x14 = UpConvBlock(128, x13)
-  print("Stage9", x14.shape)
-  x15 = tf.keras.layers.Concatenate(axis=-1)([x14, x5])
-  print("Stage9_1", x15.shape)
-  x16 = SaBlock(128, x15)
-  print("Stage10", x16.shape)
-
-  x17 = UpConvBlock(64, x16)
-  print("Stage11", x17.shape)
-  x18 = tf.keras.layers.Concatenate(axis=-1)([x17, x3])
-  print("Stage11_1", x18.shape)
-  x19 = SaBlock(64, x18)
-  print("Stage12", x19.shape)
-
-  x20 = UpConvBlock(32, x19)
-  print("Stage13", x20.shape)
-  x21 = tf.keras.layers.Concatenate(axis=-1)([x20, x1])
-  print("Stage13_1", x21.shape)
-  x22 = SaBlock(32, x21)
-  print("Stage14", x22.shape)
-
-  out = tf.keras.layers.Conv2D(filters=1, kernel_size=3, padding="same", use_bias=True, activation='sigmoid')(x22)
-  print("Stage15", out.shape)
-  return tf.keras.Model(inputs=input, outputs=out, name="SD_UNet")
+class SdUnet(tf.keras.models.Model):
+    def __init__(self, input_shape):
+        self.input = tf.keras.layers.Input(input_shape)
+        # Encoder
+        self.first_encode_sa_block = SaBlock(32)
+        self.first_down_conv_block = DownConvBlock(32)
+        self.second_encode_sa_block = SaBlock(64)
+        self.second_down_conv_block = DownConvBlock(64)
+        self.third_encode_sa_block = SaBlock(128)
+        self.third_down_conv_block = DownConvBlock(128)
+        self.fourth_encode_sa_block = SaBlock(256)
+        self.fourth_down_conv_block = DownConvBlock(256)
+        self.fifth_encode_sa_block = SaBlock(512)
+        # BottleNeck
+        self.dense_aspp_block = DenseAsppBlock(256)
+        # Decoder
+        self.first_up_conv_block = UpConvBlock(256)
+        self.first_decode_sa_block = UpConvBlock(256)
+        self.second_up_conv_block = UpConvBlock(128)
+        self.second_decode_sa_block = UpConvBlock(128)
+        self.third_up_conv_block = UpConvBlock(64)
+        self.third_decode_sa_block = UpConvBlock(64)
+        self.fourth_up_conv_block = UpConvBlock(32)
+        self.fourth_decode_sa_block = UpConvBlock(32)
+    
+    def call(self, input):
+        x = self.input(input)
+        # Encoder
+        first_sa = self.first_encode_sa_block(x)
+        x = self.first_down_conv_block(first_sa)
+        second_sa = self.second_encode_sa_block(x)
+        x = self.second_down_conv_block(second_sa)
+        third_sa = self.third_encode_sa_block(x)
+        x = self.third_down_conv_block(third_sa)
+        fourth_sa = self.fourth_encode_sa_block(x)
+        x = self.fourth_down_conv_block(fourth_sa)
+        fifth_sa = self.fifth_encode_sa_block(x)
+        # BottleNeck
+        x = self.dense_aspp_block(fifth_sa)
+        # Decoder
+        first_up = self.first_up_conv_block(x)
+        x_concat = tf.concat([fourth_sa, first_up])
+        x = self.first_decode_sa_block(x_concat)
+        second_up = self.second_up_conv_block(x)
+        x_concat = tf.concat([third_sa, second_up])
+        x = self.second_decode_sa_block(x_concat)
+        third_up = self.third_up_conv_block(x)
+        x_concat = tf.concat([second_sa, third_up])
+        x = self.third_decode_sa_block(x_concat)
+        fourth_up = self.fourth_up_conv_block(x)
+        x_concat = tf.concat([first_sa, fourth_up])
+        out = self.fourth_decode_sa_block(x_concat)
+        return out
