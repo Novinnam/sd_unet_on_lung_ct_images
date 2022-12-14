@@ -8,12 +8,11 @@ class ConvBlock(tf.keras.layers.Layer):
                                            padding='same', 
                                            dilation_rate=dilation_rate)
         self.group_norm = tfa.layers.GroupNormalization(groups=32)
-        self.leaky_relu = tf.layers.LeakyReLU()
 
     def call(self, input):
         x = self.conv(input)
         x = self.group_norm(x)
-        out = self.leaky_relu(x)
+        out = tf.nn.leaky_relu(x)
         return out
 
 class SaBlock(tf.keras.layers.Layer):
@@ -21,35 +20,29 @@ class SaBlock(tf.keras.layers.Layer):
         super(SaBlock, self).__init__()
         self.first_x_conv_block = ConvBlock(filters)
         self.second_x_conv_block = ConvBlock(filters)
-        self.avg_pool = tf.keras.layers.AveragePooling2D()
         self.first_y_conv_block = ConvBlock(filters)
         self.second_y_conv_block = ConvBlock(filters)
         self.up_sampling = tf.keras.layers.UpSampling2D()
-        self.multiply = tf.keras.layers.Multiply()
-        self.add = tf.keras.layers.Add()
 
     def call(self, input):
         x = self.first_x_conv_block(input)
         x = self.second_x_conv_block(x)
-        y = self.avg_pool(input)
+        y = tf.nn.avg_pool2d(input)
         y = self.first_y_conv_block(y)
         y = self.second_y_conv_block(y)
         y = self.up_sampling(y)
-        mul = self.multiply([x, y])
-        out = self.add([y, mul])
+        mul = tf.multiply(x, y)
+        out = tf.add(y, mul)
         return out
 
 class DownConvBlock(tf.keras.layers.Layer):
     def __init__(self, filters):
-        self.max_pool = tf.keras.layers.MaxPooling2D()
-        self.avg_pool = tf.keras.layers.AveragePooling2D()
-        self.concat = tf.keras.layers.Concatenate()
         self.conv_block = ConvBlock(filters, kernel_size=1)
     
     def call(self, input):
-        x = self.max_pool(input)
-        y = self.avg_pool(input)
-        z = self.concat([x, y])
+        x = tf.nn.max_pool2d(input)
+        y = tf.nn.avg_pool2d(input)
+        z = tf.concat([x, y], axis=-1)
         out = self.conv_block(z)
         return out
 
@@ -61,31 +54,30 @@ class UpConvBlock(tf.keras.layers.Layer):
     def call(self, input):
         x = self.up_sampling(input)
         out = self.conv_block(x)
+        return out    
+
+class DenseAsppBlock(tf.keras.layers.Layer):
+    def __init__(self, filters):
+        self.second_branch_conv_block = ConvBlock(filters, dilation_rate=18)
+        self.third_branch_conv_block = ConvBlock(filters, dilation_rate=12)
+        self.fourth_branch_conv_block = ConvBlock(filters, dilation_rate=6)
+        self.fifth_branch_conv_block = ConvBlock(filters, kernel_size=1)
+        self.last_branch_conv_block = ConvBlock(filters, kernel_size=1)
+    
+    def call(self, input):
+        dims = input.shape
+        fifth_branch = self.fourth_conv_block(input)
+        fourth_branch = self.fourth_branch_conv_block(input)
+        third_branch_concat = tf.concat([input, fourth_branch], axis=-1)
+        third_branch = self.third_branch_conv_block(third_branch_concat)
+        second_branch_first_concat = tf.concat([input, third_branch_concat], axis=-1)
+        second_branch_second_concat = tf.concat([third_branch, second_branch_first_concat], axis=-1)
+        second_branch = self.second_branch_conv_block(second_branch_second_concat)
+        first_branch = tf.nn.avg_pool2d(input=input, ksize=(dims[-3, dims[-2]]))
+
+        out = tf.concat([first_branch, second_branch, third_branch, fourth_branch, fifth_branch], axis=-1)
         return out
-
-def DASPP(dspp_input):
-  dims = dspp_input.shape
-  x = tf.keras.layers.AveragePooling2D(pool_size=(dims[-3], dims[-2]))(dspp_input)
-  print("Stage1:", x.shape)
-  x = convolution_block(x, num_filters=256, kernel_size=1, dilation_rate=1, padding="same", use_bias=True)
-  out_pool = tf.keras.layers.UpSampling2D(
-        size=(dims[-3] // x.shape[1], dims[-2] // x.shape[2]),
-         interpolation="bilinear",
-    )(x)
-
-  out_1 = convolution_block(dspp_input, kernel_size=1, dilation_rate=1)
-  out_6 = convolution_block(dspp_input, kernel_size=3, dilation_rate=6)
-  x_12 = tf.keras.layers.Concatenate(axis=-1)([dspp_input, out_6])
-  out_12 = convolution_block(x_12, kernel_size=3, dilation_rate=12)
-
-  x_18_1 = tf.keras.layers.Concatenate(axis=-1)([dspp_input, x_12])
-  x_18_2 = tf.keras.layers.Concatenate(axis=-1)([x_18_1, out_12])
-  out_18 = convolution_block(x_18_2, kernel_size=3, dilation_rate=18)
-
-  x = tf.keras.layers.Concatenate(axis=-1)([out_pool, out_1, out_6, out_12, out_18])
-  output = convolution_block(x, kernel_size=1)
-  return output
-
+        
 def SD_UNet(input_size=(288, 288, 3)):
   input = tf.keras.Input(input_size)
   x1 = SaBlock(32, input)
